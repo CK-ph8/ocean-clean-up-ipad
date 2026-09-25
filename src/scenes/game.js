@@ -163,7 +163,7 @@ export class Game extends Phaser.Scene {
         const moveLeft = this.cursors.left.isDown || this.touchMoveLeft;
         const moveRight = this.cursors.right.isDown || this.touchMoveRight;
 
-        // Player Movement (only when not extending/retracting hook)
+        // Player Movement
         if (this.hookState === 'SWINGING') {
             if (moveLeft) { 
                 this.player.setVelocityX(-650); 
@@ -199,15 +199,14 @@ export class Game extends Phaser.Scene {
             this.hookY = originY + Math.cos(this.hookAngle) * this.hookLength;
 
         } else if (this.hookState === 'EXTENDING') {
-            this.hookLength += 16 * deltaFactor; // Speed of hook extending downward
+            this.hookLength += 16 * deltaFactor;
             this.hookX = originX + Math.sin(this.hookAngle) * this.hookLength;
             this.hookY = originY + Math.cos(this.hookAngle) * this.hookLength;
 
-            // Check collision with targets
             let allItems = [...this.plasticGroup.getChildren(), ...this.coralGroup.getChildren()].filter(i => i.active);
             for (let item of allItems) {
                 let dist = Phaser.Math.Distance.Between(this.hookX, this.hookY, item.x, item.y);
-                if (dist < 35) { // Catch item radius
+                if (dist < 35) {
                     this.hookedItem = item;
                     this.hookState = 'RETRACTING';
                     this.sound.play('splash');
@@ -215,13 +214,12 @@ export class Game extends Phaser.Scene {
                 }
             }
 
-            // Hit max depth or bottom edge of game area
             if (this.hookLength >= this.hookMaxLength || this.hookY >= 680) {
                 this.hookState = 'RETRACTING';
             }
 
         } else if (this.hookState === 'RETRACTING') {
-            this.hookLength -= 24 * deltaFactor; // Speed of hook pulling back up
+            this.hookLength -= 24 * deltaFactor;
             if (this.hookLength < 40) {
                 this.hookLength = 40;
                 this.hookState = 'SWINGING';
@@ -314,12 +312,14 @@ export class Game extends Phaser.Scene {
         const fishKey = Phaser.Utils.Array.GetRandom(['fish1', 'fish2']);
         const swimFromLeft = Math.random() < 0.5;
         
+        // Random start and end coordinates across the full screen width
         const startX = swimFromLeft ? -100 : 1380;
         const endX = swimFromLeft ? 1380 : -100;
-        const startY = Phaser.Math.Between(350, 520);
-        const endY = Phaser.Math.Between(350, 520);
+        const startY = Phaser.Math.Between(350, 550);
+        const endY = Phaser.Math.Between(350, 550);
         
-        const controlX = 640 + Phaser.Math.Between(-150, 150);
+        // Curve waypoint for organic sinusoidal swimming path
+        const controlX = 640 + Phaser.Math.Between(-200, 200);
         const controlY = startY + Phaser.Math.Between(-150, 150);
 
         const duration = Phaser.Math.Between(6000, 9500);
@@ -335,6 +335,7 @@ export class Game extends Phaser.Scene {
             .setAlpha(alpha)
             .setDepth(1);
 
+        // Adjust facing direction based on horizontal swim vector
         const facingDirection = swimFromLeft ? 1 : -1;
         fish.setScale(baseScale * facingDirection, baseScale);
 
@@ -351,12 +352,14 @@ export class Game extends Phaser.Scene {
                 fish.x = position.x;
                 fish.y = position.y;
 
+                // Dynamically pitch the sprite based on curve tangent direction
                 let pitch = Math.atan2(tangent.y, Math.abs(tangent.x));
                 fish.rotation = Phaser.Math.Clamp(pitch * 0.4, -0.35, 0.35);
             },
             onComplete: () => fish.destroy()
         });
 
+        // Subtle fin flapping tween
         this.tweens.add({
             targets: fish,
             scaleY: baseScale * Phaser.Math.FloatBetween(0.96, 1.04),
@@ -369,10 +372,33 @@ export class Game extends Phaser.Scene {
 
     spawnBubble() {
         if (this.gameOverState) return;
-        const bubble = this.add.image(640, 750, 'bubble').setScale(0.5).setAlpha(0.4);
+        
+        // Spawn bubbles from random seabed locations rising upward to the surface
+        const startX = Phaser.Math.Between(50, 1230);
+        const startY = Phaser.Math.Between(650, 720);
+        const endY = Phaser.Math.Between(100, 200);
+        const targetX = startX + Phaser.Math.Between(-40, 40);
+
+        const bubble = this.add.image(startX, startY, 'bubble')
+            .setScale(Phaser.Math.FloatBetween(0.3, 0.7))
+            .setAlpha(Phaser.Math.FloatBetween(0.2, 0.5))
+            .setDepth(1);
+
         this.tweens.add({
-            targets: bubble, y: 450, x: 640, duration: 3000,
-            onComplete: () => this.tweens.add({ targets: bubble, alpha: 0, duration: 400, onComplete: () => bubble.destroy() })
+            targets: bubble,
+            y: endY,
+            x: targetX,
+            duration: Phaser.Math.Between(3000, 5000),
+            ease: 'Sine.easeOut',
+            onComplete: () => {
+                this.tweens.add({
+                    targets: bubble,
+                    alpha: 0,
+                    scale: bubble.scale * 1.3,
+                    duration: 300,
+                    onComplete: () => bubble.destroy()
+                });
+            }
         });
     }
 
