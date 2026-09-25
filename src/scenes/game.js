@@ -306,38 +306,30 @@ export class Game extends Phaser.Scene {
         this.input.keyboard.once('keydown-R', restartHandler);
     }
 
-spawnFish() {
+    spawnFish() {
         if (this.gameOverState) return;
 
         const fishKey = Phaser.Utils.Array.GetRandom(['fish1', 'fish2']);
         const swimFromLeft = Math.random() < 0.5;
-        
-        // Random start and end coordinates across the full screen width
         const startX = swimFromLeft ? -100 : 1380;
         const endX = swimFromLeft ? 1380 : -100;
-        const startY = Phaser.Math.Between(350, 550);
-        const endY = Phaser.Math.Between(350, 550);
+
+        const startY = Phaser.Math.Between(480, 600);
+        const endY = Phaser.Math.Between(480, 600);
         
-        // Curve waypoint for organic sinusoidal swimming path
-        const controlX = 640 + Phaser.Math.Between(-200, 200);
-        const controlY = startY + Phaser.Math.Between(-150, 150);
+        const controlX = 640 + Phaser.Math.Between(-150, 150);
+        const controlY = startY + Phaser.Math.Between(-50, 50);
 
         const duration = Phaser.Math.Between(6000, 9500);
         const baseScale = Phaser.Math.FloatBetween(0.09, 0.14);
-        const alpha = Phaser.Math.FloatBetween(0.5, 0.85);
 
         const p1 = new Phaser.Math.Vector2(startX, startY);
         const p2 = new Phaser.Math.Vector2(controlX, controlY);
         const p3 = new Phaser.Math.Vector2(endX, endY);
         const curve = new Phaser.Curves.QuadraticBezier(p1, p2, p3);
 
-        const fish = this.add.sprite(startX, startY, fishKey)
-            .setAlpha(alpha)
-            .setDepth(1);
-
-        // Inverted direction toggle to fix sprite facing orientation:
-        const facingDirection = swimFromLeft ? -1 : 1;
-        fish.setScale(baseScale * facingDirection, baseScale);
+        const fish = this.add.sprite(startX, startY, fishKey).setAlpha(0.75).setDepth(1);
+        fish.setScale(baseScale * (swimFromLeft ? -1 : 1), baseScale);
 
         let pathProgress = { value: 0 };
         
@@ -348,30 +340,13 @@ spawnFish() {
             onUpdate: () => {
                 const position = curve.getPoint(pathProgress.value);
                 const tangent = curve.getTangent(pathProgress.value);
-
                 fish.x = position.x;
                 fish.y = position.y;
-
-                // Adjust rotation angle based on movement direction
-                let pitch = Math.atan2(tangent.y, tangent.x);
-                if (!swimFromLeft) pitch += Math.PI; // Correct pitch angle when swimming left
-                
-                fish.rotation = Phaser.Math.Clamp(pitch * 0.4, -0.35, 0.35);
+                fish.rotation = Phaser.Math.Clamp(Math.atan2(-tangent.y, Math.abs(tangent.x)) * 0.4, -0.35, 0.35);
             },
             onComplete: () => fish.destroy()
         });
-
-        // Subtle fin flapping tween
-        this.tweens.add({
-            targets: fish,
-            scaleY: baseScale * Phaser.Math.FloatBetween(0.96, 1.04),
-            duration: Phaser.Math.Between(1000, 1600),
-            ease: 'Sine.easeInOut',
-            yoyo: true,
-            repeat: -1
-        });
     }
-
     spawnBubble() {
         if (this.gameOverState) return;
         
