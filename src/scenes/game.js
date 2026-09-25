@@ -48,7 +48,6 @@ export class Game extends Phaser.Scene {
             this.gameActive = true;
             this.startText.destroy();
             
-            // Unlock audio context for iOS Safari on iPad
             if (this.sound.context.state === 'suspended') {
                 this.sound.context.resume();
             }
@@ -66,10 +65,8 @@ export class Game extends Phaser.Scene {
     initGameLogic() {
         this.plasticGroup = this.physics.add.group();
         this.coralGroup = this.physics.add.group();
-        this.isReeling = false;
-        this.hookedItem = null;
 
-        // Touch states for iPad
+        // Touch movement states
         this.touchMoveLeft = false;
         this.touchMoveRight = false;
 
@@ -78,7 +75,20 @@ export class Game extends Phaser.Scene {
         this.player = this.physics.add.sprite(100, 250, 'player').setScale(0.25).setCollideWorldBounds(true);
         this.player.body.setBoundsRectangle(new Phaser.Geom.Rectangle(20, 0, 1240, 720));
         this.player.body.setAllowGravity(false);
+
+        // Graphics setup for line and hook
         this.lineGraphics = this.add.graphics().setDepth(5);
+
+        // Swinging Hook Variables
+        this.hookAngle = 0;
+        this.hookSwingSpeed = 0.035;
+        this.hookMaxAngle = Math.PI / 3; // 60 degrees left/right swing
+        this.hookLength = 40; 
+        this.hookMaxLength = 480; 
+        this.hookState = 'SWINGING'; // 'SWINGING', 'EXTENDING', 'RETRACTING'
+        this.hookX = 0;
+        this.hookY = 0;
+        this.hookedItem = null;
 
         this.wakeParticles = this.add.particles(0, 0, 'bubble', {
             speed: 20, scale: { start: 0.2, end: 0 },
@@ -104,12 +114,11 @@ export class Game extends Phaser.Scene {
         this.cursors = this.input.keyboard.createCursorKeys();
         this.spaceBar = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
 
-        // Build iPad Touch Control Buttons
         this.createTouchControls();
     }
 
     createTouchControls() {
-        // Left Button
+        // Left Touch Button
         const leftBtn = this.add.circle(100, 620, 50, 0xffffff, 0.3)
             .setInteractive()
             .setScrollFactor(0)
@@ -120,7 +129,7 @@ export class Game extends Phaser.Scene {
         leftBtn.on('pointerup', () => { this.touchMoveLeft = false; });
         leftBtn.on('pointerout', () => { this.touchMoveLeft = false; });
 
-        // Right Button
+        // Right Touch Button
         const rightBtn = this.add.circle(230, 620, 50, 0xffffff, 0.3)
             .setInteractive()
             .setScrollFactor(0)
@@ -139,14 +148,13 @@ export class Game extends Phaser.Scene {
         this.add.text(1180, 620, 'HOOK', { fontSize: '24px', fill: '#fff', fontStyle: 'bold' }).setOrigin(0.5).setDepth(31);
 
         hookBtn.on('pointerdown', () => {
-            if (this.gameActive) this.handleFishing();
+            if (this.gameActive) this.dropHook();
         });
     }
 
     update(time, delta) {
         if (!this.gameActive) return; 
 
-        // Delta scaling ensures identical high speeds on both 60Hz and 120Hz iPad Pro displays
         const deltaFactor = delta / 16.666;
 
         this.player.setVelocityX(0);
@@ -155,7 +163,8 @@ export class Game extends Phaser.Scene {
         const moveLeft = this.cursors.left.isDown || this.touchMoveLeft;
         const moveRight = this.cursors.right.isDown || this.touchMoveRight;
 
-        if (!this.isReeling) {
+        // Player Movement (only when not extending/retracting hook)
+        if (this.hookState === 'SWINGING') {
             if (moveLeft) { 
                 this.player.setVelocityX(-650); 
                 this.player.setFlipX(false);
@@ -173,37 +182,78 @@ export class Game extends Phaser.Scene {
         }
 
         if (Phaser.Input.Keyboard.JustDown(this.spaceBar)) { 
-            this.handleFishing(); 
+            this.dropHook(); 
         }
 
-        if (this.isReeling && this.hookedItem) {
-            this.lineGraphics.lineStyle(4, 0xffffff, 0.9);
-            this.lineGraphics.lineBetween(this.player.x, this.player.y + 20, this.hookedItem.x, this.hookedItem.y);
-            
-            // FAST REEL SPEED FOR IPAD: 28px per frame (scaled by delta)
-            this.hookedItem.y -= 28 * deltaFactor; 
+        // SWINGING HOOK & LINE LOGIC
+        const originX = this.player.x;
+        const originY = this.player.y + 20;
 
-            if (this.hookedItem.y <= this.player.y + 60) { 
-                this.finishReel(); 
+        if (this.hookState === 'SWINGING') {
+            this.hookAngle += this.hookSwingSpeed * deltaFactor;
+            if (this.hookAngle > this.hookMaxAngle || this.hookAngle < -this.hookMaxAngle) {
+                this.hookSwingSpeed = -this.hookSwingSpeed;
+            }
+
+            this.hookX = originX + Math.sin(this.hookAngle) * this.hookLength;
+            this.hookY = originY + Math.cos(this.hookAngle) * this.hookLength;
+
+        } else if (this.hookState === 'EXTENDING') {
+            this.hookLength += 16 * deltaFactor; // Speed of hook extending downward
+            this.hookX = originX + Math.sin(this.hookAngle) * this.hookLength;
+            this.hookY = originY + Math.cos(this.hookAngle) * this.hookLength;
+
+            // Check collision with targets
+            let allItems = [...this.plasticGroup.getChildren(), ...this.coralGroup.getChildren()].filter(i => i.active);
+            for (let item of allItems) {
+                let dist = Phaser.Math.Distance.Between(this.hookX, this.hookY, item.x, item.y);
+                if (dist < 35) { // Catch item radius
+                    this.hookedItem = item;
+                    this.hookState = 'RETRACTING';
+                    this.sound.play('splash');
+                    break;
+                }
+            }
+
+            // Hit max depth or bottom edge of game area
+            if (this.hookLength >= this.hookMaxLength || this.hookY >= 680) {
+                this.hookState = 'RETRACTING';
+            }
+
+        } else if (this.hookState === 'RETRACTING') {
+            this.hookLength -= 24 * deltaFactor; // Speed of hook pulling back up
+            if (this.hookLength < 40) {
+                this.hookLength = 40;
+                this.hookState = 'SWINGING';
+                this.finishReel();
+            }
+
+            this.hookX = originX + Math.sin(this.hookAngle) * this.hookLength;
+            this.hookY = originY + Math.cos(this.hookAngle) * this.hookLength;
+
+            if (this.hookedItem) {
+                this.hookedItem.x = this.hookX;
+                this.hookedItem.y = this.hookY;
             }
         }
+
+        // Draw Fishing Line and Hook Tip
+        this.lineGraphics.lineStyle(3, 0xffffff, 0.9);
+        this.lineGraphics.lineBetween(originX, originY, this.hookX, this.hookY);
+        this.lineGraphics.fillStyle(0xffd700, 1);
+        this.lineGraphics.fillCircle(this.hookX, this.hookY, 6);
     }
 
-    handleFishing() {
-        if (this.isReeling) return;
-        this.sound.play('whoosh'); 
-        
-        let allItems = [...this.plasticGroup.getChildren(), ...this.coralGroup.getChildren()].filter(i => i.active);
-        let target = allItems.sort((a, b) => Math.abs(a.x - this.player.x) - Math.abs(b.x - this.player.x))[0];
-        
-        if (target && Math.abs(target.x - this.player.x) < 90) {
-            this.sound.play('splash'); 
-            this.isReeling = true;
-            this.hookedItem = target;
+    dropHook() {
+        if (this.hookState === 'SWINGING') {
+            this.sound.play('whoosh');
+            this.hookState = 'EXTENDING';
         }
     }
 
     finishReel() {
+        if (!this.hookedItem) return;
+
         if (this.plasticGroup.contains(this.hookedItem)) {
             this.sound.play('collect'); 
             this.plasticCount++;
@@ -219,10 +269,9 @@ export class Game extends Phaser.Scene {
             this.showPopUpText("CORAL HIT!");
             if (this.coralDamage >= this.maxCoralDamage) this.endGame("GAME OVER", false);
         }
-        if (this.hookedItem) this.hookedItem.destroy();
+
+        this.hookedItem.destroy();
         this.hookedItem = null;
-        this.isReeling = false;
-        this.lineGraphics.clear();
     }
 
     updateTimer() {
