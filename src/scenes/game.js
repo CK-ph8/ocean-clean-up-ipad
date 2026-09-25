@@ -306,7 +306,7 @@ export class Game extends Phaser.Scene {
         this.input.keyboard.once('keydown-R', restartHandler);
     }
 
-    spawnFish() {
+spawnFish() {
         if (this.gameOverState) return;
 
         const fishKey = Phaser.Utils.Array.GetRandom(['fish1', 'fish2']);
@@ -335,8 +335,8 @@ export class Game extends Phaser.Scene {
             .setAlpha(alpha)
             .setDepth(1);
 
-        // Adjust facing direction based on horizontal swim vector
-        const facingDirection = swimFromLeft ? 1 : -1;
+        // Inverted direction toggle to fix sprite facing orientation:
+        const facingDirection = swimFromLeft ? -1 : 1;
         fish.setScale(baseScale * facingDirection, baseScale);
 
         let pathProgress = { value: 0 };
@@ -352,8 +352,10 @@ export class Game extends Phaser.Scene {
                 fish.x = position.x;
                 fish.y = position.y;
 
-                // Dynamically pitch the sprite based on curve tangent direction
-                let pitch = Math.atan2(tangent.y, Math.abs(tangent.x));
+                // Adjust rotation angle based on movement direction
+                let pitch = Math.atan2(tangent.y, tangent.x);
+                if (!swimFromLeft) pitch += Math.PI; // Correct pitch angle when swimming left
+                
                 fish.rotation = Phaser.Math.Clamp(pitch * 0.4, -0.35, 0.35);
             },
             onComplete: () => fish.destroy()
