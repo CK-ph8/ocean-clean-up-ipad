@@ -38,232 +38,191 @@ export class Game extends Phaser.Scene {
     showStartScreen() {
         this.gameActive = false;
         this.gameOverState = false;
+
         this.startText = this.add.text(640, 360, 'Tap Screen to Start', { 
-            fontSize: '42px', fill: '#fff', stroke: '#000', strokeThickness: 6 
+            fontSize: '44px', fill: '#fff', stroke: '#000', strokeThickness: 6 
         }).setOrigin(0.5).setDepth(10);
 
-        const startGame = () => {
+        const startGameHandler = () => {
             if (this.gameActive) return;
             this.gameActive = true;
             this.startText.destroy();
+            
+            // Unlock audio context for iOS Safari on iPad
+            if (this.sound.context.state === 'suspended') {
+                this.sound.context.resume();
+            }
+
             this.sound.play('gameStart'); 
             this.music = this.sound.add('bgMusic', { volume: 0.4, loop: true }); 
             this.music.play();
             this.initGameLogic();
         };
 
-        this.input.keyboard.once('keydown-SPACE', startGame);
-        this.input.once('pointerdown', startGame);
+        this.input.once('pointerdown', startGameHandler);
+        this.input.keyboard.once('keydown-SPACE', startGameHandler);
     }
 
     initGameLogic() {
         this.plasticGroup = this.physics.add.group();
         this.coralGroup = this.physics.add.group();
+        this.isReeling = false;
+        this.hookedItem = null;
 
-        // Player Controls setup
-        this.cursors = this.input.keyboard.createCursorKeys();
-        this.keyA = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A);
-        this.keyD = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D);
-        
+        // Touch states for iPad
+        this.touchMoveLeft = false;
+        this.touchMoveRight = false;
+
+        this.spawnFloorLayout();
+
         this.player = this.physics.add.sprite(100, 250, 'player').setScale(0.25).setCollideWorldBounds(true);
         this.player.body.setBoundsRectangle(new Phaser.Geom.Rectangle(20, 0, 1240, 720));
         this.player.body.setAllowGravity(false);
-        this.playerSpeed = 300;
+        this.lineGraphics = this.add.graphics().setDepth(5);
 
-        // Gold Miner Hook States
-        this.hookState = 'SWINGING';
-        this.hookAngle = 0; 
-        this.hookSpeed = 0.012; 
-        this.hookDirection = 1; 
-        this.maxAngle = Math.PI / 3; 
-        
-        this.minLineLength = 28; 
-        this.lineLength = this.minLineLength; 
-        this.maxLineLength = 550; 
-        this.hookedItem = null;
-        this.reelSpeed = 6; 
+        this.wakeParticles = this.add.particles(0, 0, 'bubble', {
+            speed: 20, scale: { start: 0.2, end: 0 },
+            alpha: { start: 0.3, end: 0 }, lifespan: 600,
+            frequency: 50, emitting: false
+        });
+        this.wakeParticles.startFollow(this.player, 0, 30);
 
         this.plasticCount = 0;
         this.maxPlastic = 10; 
         this.coralDamage = 0;
         this.maxCoralDamage = 5; 
-        this.timeLeft = 70;
+        this.timeLeft = 60; 
 
-        this.spawnFloorLayout();
-
-        this.lineGraphics = this.add.graphics().setDepth(5);
-
-        this.scoreText = this.add.text(16, 16, `Trash Collected: 0/${this.maxPlastic}`, { fontSize: '32px', fill: '#fff', stroke: '#000', strokeThickness: 4 });
-        this.damageText = this.add.text(16, 55, `Coral Damage: 0/${this.maxCoralDamage}`, { fontSize: '32px', fill: '#ff4d4d', stroke: '#000', strokeThickness: 4 });
-        this.timerText = this.add.text(1050, 16, `Time: ${this.timeLeft}`, { fontSize: '32px', fill: '#fff', stroke: '#000', strokeThickness: 4 });
+        this.scoreText = this.add.text(16, 16, `Trash Collected: 0/${this.maxPlastic}`, { fontSize: '30px', fill: '#fff', stroke: '#000', strokeThickness: 4 });
+        this.damageText = this.add.text(16, 55, `Coral Damage: 0/${this.maxCoralDamage}`, { fontSize: '30px', fill: '#ff4d4d', stroke: '#000', strokeThickness: 4 });
+        this.timerText = this.add.text(1050, 16, `Time: ${this.timeLeft}`, { fontSize: '30px', fill: '#fff', stroke: '#000', strokeThickness: 4 });
 
         this.fishTimer = this.time.addEvent({ delay: 1800, callback: this.spawnFish, callbackScope: this, loop: true });
-        this.bubbleTimer = this.time.addEvent({ delay: 300, callback: this.spawnBubble, callbackScope: this, loop: true });
+        this.bubbleTimer = this.time.addEvent({ delay: 500, callback: this.spawnBubble, callbackScope: this, loop: true });
         this.countdownTimer = this.time.addEvent({ delay: 1000, callback: this.updateTimer, callbackScope: this, loop: true });
         
+        this.cursors = this.input.keyboard.createCursorKeys();
         this.spaceBar = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
 
-        // iPad Touch Setup
-        this.setupTouchUI();
+        // Build iPad Touch Control Buttons
+        this.createTouchControls();
     }
 
-    setupTouchUI() {
-        this.isTouchLeft = false;
-        this.isTouchRight = false;
+    createTouchControls() {
+        // Left Button
+        const leftBtn = this.add.circle(100, 620, 50, 0xffffff, 0.3)
+            .setInteractive()
+            .setScrollFactor(0)
+            .setDepth(30);
+        this.add.text(100, 620, '◄', { fontSize: '40px', fill: '#fff' }).setOrigin(0.5).setDepth(31);
 
-        // Visual On-Screen Movement Buttons for iPad
-        const btnY = 660;
-        const leftBtn = this.add.rectangle(100, btnY, 140, 80, 0x000000, 0.4).setInteractive().setDepth(20);
-        this.add.text(100, btnY, '◀ LEFT', { fontSize: '24px', fill: '#fff' }).setOrigin(0.5).setDepth(21);
+        leftBtn.on('pointerdown', () => { this.touchMoveLeft = true; });
+        leftBtn.on('pointerup', () => { this.touchMoveLeft = false; });
+        leftBtn.on('pointerout', () => { this.touchMoveLeft = false; });
 
-        const rightBtn = this.add.rectangle(1180, btnY, 140, 80, 0x000000, 0.4).setInteractive().setDepth(20);
-        this.add.text(1180, btnY, 'RIGHT ▶', { fontSize: '24px', fill: '#fff' }).setOrigin(0.5).setDepth(21);
+        // Right Button
+        const rightBtn = this.add.circle(230, 620, 50, 0xffffff, 0.3)
+            .setInteractive()
+            .setScrollFactor(0)
+            .setDepth(30);
+        this.add.text(230, 620, '►', { fontSize: '40px', fill: '#fff' }).setOrigin(0.5).setDepth(31);
 
-        leftBtn.on('pointerdown', () => { this.isTouchLeft = true; });
-        leftBtn.on('pointerup', () => { this.isTouchLeft = false; });
-        leftBtn.on('pointerout', () => { this.isTouchLeft = false; });
+        rightBtn.on('pointerdown', () => { this.touchMoveRight = true; });
+        rightBtn.on('pointerup', () => { this.touchMoveRight = false; });
+        rightBtn.on('pointerout', () => { this.touchMoveRight = false; });
 
-        rightBtn.on('pointerdown', () => { this.isTouchRight = true; });
-        rightBtn.on('pointerup', () => { this.isTouchRight = false; });
-        rightBtn.on('pointerout', () => { this.isTouchRight = false; });
+        // Drop Hook Button
+        const hookBtn = this.add.circle(1180, 620, 60, 0xff6b4a, 0.8)
+            .setInteractive()
+            .setScrollFactor(0)
+            .setDepth(30);
+        this.add.text(1180, 620, 'HOOK', { fontSize: '24px', fill: '#fff', fontStyle: 'bold' }).setOrigin(0.5).setDepth(31);
 
-        // Tap top main screen area to drop hook
-        this.input.on('pointerdown', (pointer) => {
-            if (pointer.y < 600) {
-                this.triggerHookDrop();
-            }
+        hookBtn.on('pointerdown', () => {
+            if (this.gameActive) this.handleFishing();
         });
     }
 
-    triggerHookDrop() {
-        if (this.hookState === 'SWINGING') {
-            this.hookState = 'SHOOTING';
-            this.sound.play('whoosh');
-        }
-    }
-
-    update() {
+    update(time, delta) {
         if (!this.gameActive) return; 
 
-        // 1. PLAYER MOVEMENT
+        // Delta scaling ensures identical high speeds on both 60Hz and 120Hz iPad Pro displays
+        const deltaFactor = delta / 16.666;
+
         this.player.setVelocityX(0);
-        if (this.cursors.left.isDown || this.keyA.isDown || this.isTouchLeft) {
-            this.player.setVelocityX(-this.playerSpeed);
-            this.player.setFlipX(true);
-        } else if (this.cursors.right.isDown || this.keyD.isDown || this.isTouchRight) {
-            this.player.setVelocityX(this.playerSpeed);
-            this.player.setFlipX(false);
-        }
-
-        // 2. HOOK & LINE LOGIC
         this.lineGraphics.clear();
-        
-        const offsetX = this.player.flipX ? 70 : -70;
-        const startX = this.player.x + offsetX;
-        const startY = this.player.y + 62;
 
-        if (this.hookState === 'SWINGING') {
-            this.hookAngle += this.hookSpeed * this.hookDirection;
-            if (this.hookAngle > this.maxAngle) this.hookDirection = -1;
-            if (this.hookAngle < -this.maxAngle) this.hookDirection = 1;
+        const moveLeft = this.cursors.left.isDown || this.touchMoveLeft;
+        const moveRight = this.cursors.right.isDown || this.touchMoveRight;
 
-            if (Phaser.Input.Keyboard.JustDown(this.spaceBar)) {
-                this.triggerHookDrop();
+        if (!this.isReeling) {
+            if (moveLeft) { 
+                this.player.setVelocityX(-650); 
+                this.player.setFlipX(false);
+                this.wakeParticles.emitting = true;
             }
-        } 
-        else if (this.hookState === 'SHOOTING') {
-            this.lineLength += 12;
-
-            const hookX = startX + Math.sin(this.hookAngle) * this.lineLength;
-            const hookY = startY + Math.cos(this.hookAngle) * this.lineLength;
-
-            let allItems = [...this.plasticGroup.getChildren(), ...this.coralGroup.getChildren()].filter(i => i.active);
-            for (let item of allItems) {
-                if (Phaser.Math.Distance.Between(hookX, hookY, item.x, item.y) < 35) {
-                    this.sound.play('splash');
-                    this.hookedItem = item;
-                    this.hookState = 'REELING';
-                    this.reelSpeed = this.plasticGroup.contains(item) ? 6 : 3.5;
-                    break;
-                }
+            else if (moveRight) { 
+                this.player.setVelocityX(650); 
+                this.player.setFlipX(true); 
+                this.wakeParticles.emitting = true;
+            } else {
+                this.wakeParticles.emitting = false;
             }
-
-            if (this.lineLength >= this.maxLineLength || hookY >= 700) {
-                this.hookState = 'REELING';
-                this.reelSpeed = 8;
-            }
-        } 
-        else if (this.hookState === 'REELING') {
-            this.lineLength -= this.reelSpeed;
-
-            if (this.hookedItem) {
-                this.hookedItem.x = startX + Math.sin(this.hookAngle) * this.lineLength;
-                this.hookedItem.y = startY + Math.cos(this.hookAngle) * this.lineLength + 18;
-            }
-
-            if (this.lineLength <= this.minLineLength) {
-                this.lineLength = this.minLineLength;
-                this.finishReel();
-            }
+        } else {
+            this.wakeParticles.emitting = false;
         }
 
-        const endX = startX + Math.sin(this.hookAngle) * this.lineLength;
-        const endY = startY + Math.cos(this.hookAngle) * this.lineLength;
+        if (Phaser.Input.Keyboard.JustDown(this.spaceBar)) { 
+            this.handleFishing(); 
+        }
 
-        this.lineGraphics.lineStyle(3, 0xcccccc);
-        this.lineGraphics.lineBetween(startX, startY, endX, endY);
+        if (this.isReeling && this.hookedItem) {
+            this.lineGraphics.lineStyle(4, 0xffffff, 0.9);
+            this.lineGraphics.lineBetween(this.player.x, this.player.y + 20, this.hookedItem.x, this.hookedItem.y);
+            
+            // FAST REEL SPEED FOR IPAD: 28px per frame (scaled by delta)
+            this.hookedItem.y -= 28 * deltaFactor; 
 
-        const isClawOpen = this.hookState !== 'REELING' || !this.hookedItem;
-        this.drawClaw(endX, endY, -this.hookAngle, isClawOpen);
+            if (this.hookedItem.y <= this.player.y + 60) { 
+                this.finishReel(); 
+            }
+        }
     }
 
-    drawClaw(x, y, angle, isOpen) {
-        this.lineGraphics.save();
-        this.lineGraphics.translateCanvas(x, y);
-        this.lineGraphics.rotateCanvas(angle);
-
-        this.lineGraphics.lineStyle(3.5, 0xd4af37); 
-        this.lineGraphics.strokeCircle(0, 0, 6);
-
-        const leftAngle = isOpen ? -0.65 : -0.25;
-        this.lineGraphics.beginPath();
-        this.lineGraphics.moveTo(0, 0);
-        this.lineGraphics.lineTo(Math.sin(leftAngle) * 22, Math.cos(leftAngle) * 22);
-        this.lineGraphics.lineTo(Math.sin(leftAngle - 0.5) * 28, Math.cos(leftAngle - 0.5) * 28 - 5);
-        this.lineGraphics.strokePath();
-
-        const rightAngle = isOpen ? 0.65 : 0.25;
-        this.lineGraphics.beginPath();
-        this.lineGraphics.moveTo(0, 0);
-        this.lineGraphics.lineTo(Math.sin(rightAngle) * 22, Math.cos(rightAngle) * 22);
-        this.lineGraphics.lineTo(Math.sin(rightAngle + 0.5) * 28, Math.cos(rightAngle + 0.5) * 28 - 5);
-        this.lineGraphics.strokePath();
-
-        this.lineGraphics.restore();
+    handleFishing() {
+        if (this.isReeling) return;
+        this.sound.play('whoosh'); 
+        
+        let allItems = [...this.plasticGroup.getChildren(), ...this.coralGroup.getChildren()].filter(i => i.active);
+        let target = allItems.sort((a, b) => Math.abs(a.x - this.player.x) - Math.abs(b.x - this.player.x))[0];
+        
+        if (target && Math.abs(target.x - this.player.x) < 90) {
+            this.sound.play('splash'); 
+            this.isReeling = true;
+            this.hookedItem = target;
+        }
     }
 
     finishReel() {
-        if (this.hookedItem) {
-            if (this.plasticGroup.contains(this.hookedItem)) {
-                this.sound.play('collect'); 
-                this.plasticCount++;
-                this.scoreText.setText(`Trash Collected: ${this.plasticCount}/${this.maxPlastic}`);
-                if (this.plasticCount >= this.maxPlastic) this.endGame("YOU HELPED SAVE THE OCEAN!", true);
-            } else {
-                this.sound.play('damage'); 
-                this.coralDamage++;
-                this.damageText.setText(`Coral Damage: ${this.coralDamage}/${this.maxCoralDamage}`);
-                this.cameras.main.shake(300, 0.02); 
-                this.player.setTint(0xff0000);
-                this.time.delayedCall(200, () => this.player.clearTint());
-                this.showPopUpText("CORAL HIT!");
-                if (this.coralDamage >= this.maxCoralDamage) this.endGame("GAME OVER", false);
-            }
-            this.hookedItem.destroy();
-            this.hookedItem = null;
+        if (this.plasticGroup.contains(this.hookedItem)) {
+            this.sound.play('collect'); 
+            this.plasticCount++;
+            this.scoreText.setText(`Trash Collected: ${this.plasticCount}/${this.maxPlastic}`);
+            if (this.plasticCount >= this.maxPlastic) this.endGame("YOU HELPED SAVE THE OCEAN!", true);
+        } else {
+            this.sound.play('damage'); 
+            this.coralDamage++;
+            this.damageText.setText(`Coral Damage: ${this.coralDamage}/${this.maxCoralDamage}`);
+            this.cameras.main.shake(300, 0.02); 
+            this.player.setTint(0xff0000);
+            this.time.delayedCall(200, () => this.player.clearTint());
+            this.showPopUpText("CORAL HIT!");
+            if (this.coralDamage >= this.maxCoralDamage) this.endGame("GAME OVER", false);
         }
-
-        this.hookState = 'SWINGING';
+        if (this.hookedItem) this.hookedItem.destroy();
+        this.hookedItem = null;
+        this.isReeling = false;
+        this.lineGraphics.clear();
     }
 
     updateTimer() {
@@ -271,7 +230,11 @@ export class Game extends Phaser.Scene {
         if (this.timeLeft > 0) {
             this.timeLeft--;
             this.timerText.setText('Time: ' + this.timeLeft);
-            if (this.timeLeft <= 10) this.timerText.setStyle({ fill: '#ff0000' });
+            if (this.timeLeft <= 10) {
+                this.timerText.setStyle({ fill: '#ff0000' });
+            } else {
+                this.timerText.setStyle({ fill: '#fff' });
+            }
         } else {
             this.endGame("TIME IS UP!", false);
         }
@@ -288,12 +251,12 @@ export class Game extends Phaser.Scene {
         if (this.music) this.music.stop(); 
         isWinner ? this.sound.play('winner') : this.sound.play('gameOver'); 
 
-        this.add.text(640, 320, msg, { fontSize: '64px', fill: '#fff', stroke: '#000', strokeThickness: 6 }).setOrigin(0.5).setDepth(20);
+        this.add.text(640, 320, msg, { fontSize: '56px', fill: '#fff', stroke: '#000', strokeThickness: 6 }).setOrigin(0.5).setDepth(20);
         this.add.text(640, 420, 'Tap Screen to Restart', { fontSize: '32px', fill: '#fff', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5).setDepth(20);
         
-        const restartGame = () => this.scene.restart();
-        this.input.keyboard.once('keydown-R', restartGame);
-        this.time.delayedCall(500, () => this.input.once('pointerdown', restartGame));
+        const restartHandler = () => this.scene.restart();
+        this.input.once('pointerdown', restartHandler);
+        this.input.keyboard.once('keydown-R', restartHandler);
     }
 
     spawnFish() {
@@ -301,25 +264,30 @@ export class Game extends Phaser.Scene {
 
         const fishKey = Phaser.Utils.Array.GetRandom(['fish1', 'fish2']);
         const swimFromLeft = Math.random() < 0.5;
+        
         const startX = swimFromLeft ? -100 : 1380;
         const endX = swimFromLeft ? 1380 : -100;
-
-        const startY = Phaser.Math.Between(480, 600);
-        const endY = Phaser.Math.Between(480, 600);
+        const startY = Phaser.Math.Between(350, 520);
+        const endY = Phaser.Math.Between(350, 520);
         
         const controlX = 640 + Phaser.Math.Between(-150, 150);
-        const controlY = startY + Phaser.Math.Between(-50, 50);
+        const controlY = startY + Phaser.Math.Between(-150, 150);
 
         const duration = Phaser.Math.Between(6000, 9500);
         const baseScale = Phaser.Math.FloatBetween(0.09, 0.14);
+        const alpha = Phaser.Math.FloatBetween(0.5, 0.85);
 
         const p1 = new Phaser.Math.Vector2(startX, startY);
         const p2 = new Phaser.Math.Vector2(controlX, controlY);
         const p3 = new Phaser.Math.Vector2(endX, endY);
         const curve = new Phaser.Curves.QuadraticBezier(p1, p2, p3);
 
-        const fish = this.add.sprite(startX, startY, fishKey).setAlpha(0.75).setDepth(1);
-        fish.setScale(baseScale * (swimFromLeft ? -1 : 1), baseScale);
+        const fish = this.add.sprite(startX, startY, fishKey)
+            .setAlpha(alpha)
+            .setDepth(1);
+
+        const facingDirection = swimFromLeft ? 1 : -1;
+        fish.setScale(baseScale * facingDirection, baseScale);
 
         let pathProgress = { value: 0 };
         
@@ -330,30 +298,32 @@ export class Game extends Phaser.Scene {
             onUpdate: () => {
                 const position = curve.getPoint(pathProgress.value);
                 const tangent = curve.getTangent(pathProgress.value);
+
                 fish.x = position.x;
                 fish.y = position.y;
-                fish.rotation = Phaser.Math.Clamp(Math.atan2(-tangent.y, Math.abs(tangent.x)) * 0.4, -0.35, 0.35);
+
+                let pitch = Math.atan2(tangent.y, Math.abs(tangent.x));
+                fish.rotation = Phaser.Math.Clamp(pitch * 0.4, -0.35, 0.35);
             },
             onComplete: () => fish.destroy()
+        });
+
+        this.tweens.add({
+            targets: fish,
+            scaleY: baseScale * Phaser.Math.FloatBetween(0.96, 1.04),
+            duration: Phaser.Math.Between(1000, 1600),
+            ease: 'Sine.easeInOut',
+            yoyo: true,
+            repeat: -1
         });
     }
 
     spawnBubble() {
         if (this.gameOverState) return;
-        const startX = Phaser.Math.Between(40, 1240);
-        const startY = Phaser.Math.Between(720, 760);
-        const bubble = this.add.image(startX, startY, 'bubble')
-            .setScale(Phaser.Math.FloatBetween(0.3, 0.7))
-            .setAlpha(Phaser.Math.FloatBetween(0.25, 0.55))
-            .setDepth(1);
-
+        const bubble = this.add.image(640, 750, 'bubble').setScale(0.5).setAlpha(0.4);
         this.tweens.add({
-            targets: bubble,
-            y: Phaser.Math.Between(80, 150),
-            x: startX + Phaser.Math.Between(-40, 40),
-            duration: Phaser.Math.Between(3500, 5500),
-            ease: 'Sine.easeOut',
-            onComplete: () => bubble.destroy()
+            targets: bubble, y: 450, x: 640, duration: 3000,
+            onComplete: () => this.tweens.add({ targets: bubble, alpha: 0, duration: 400, onComplete: () => bubble.destroy() })
         });
     }
 
@@ -361,26 +331,20 @@ export class Game extends Phaser.Scene {
         const trashKeys = ['bag', 'bottle', 'trash'];
         const coralKeys = ['pink1', 'pink2', 'pink3', 'purple1', 'purple2', 'purple3'];
 
-        const totalItems = 18;
-        const startX = 100;
-        const stepX = (1180 - startX) / (totalItems - 1);
+        const totalItems = 20;
+        const startX = 80;
+        const stepX = (1200 - startX) / (totalItems - 1);
 
         let itemPool = [];
-
-        for (let i = 0; i < this.maxPlastic; i++) {
+        for (let i = 0; i < 10; i++) {
             itemPool.push({ type: 'trash', key: Phaser.Utils.Array.GetRandom(trashKeys) });
-        }
-
-        const coralCount = totalItems - this.maxPlastic;
-        for (let i = 0; i < coralCount; i++) {
             itemPool.push({ type: 'coral', key: Phaser.Utils.Array.GetRandom(coralKeys) });
         }
-
         Phaser.Utils.Array.Shuffle(itemPool);
 
         itemPool.forEach((itemData, index) => {
             const x = startX + index * stepX;
-            const y = Phaser.Math.Between(640, 670);
+            const y = Phaser.Math.Between(650, 675);
 
             let item;
             if (itemData.type === 'coral') {
